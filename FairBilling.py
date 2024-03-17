@@ -1,6 +1,6 @@
 import sys
-from datetime import datetime
 import pandas as pd
+import time as t
 
 
 class FairBilling :
@@ -10,44 +10,66 @@ class FairBilling :
         self.readData()
     
     def readData(self):
+        # reading text file using pandas based on seprator with no header 
         df = pd.read_csv(self.__file, sep=' ', header=None)
         df.columns = ['time', 'user', 'session']
+
+        # converting data type of column time to datetime 
         df['time'] = pd.to_datetime(df['time'],errors='coerce', format='mixed', dayfirst=True)
-        df.dropna(subset=['time'], inplace=True)
-        df.dropna(subset=['session'], inplace=True)  
+        # dropping the null values from time and session column
+        df.dropna(subset=['time','session'], inplace=True)
+      
+        # filtering data based of session flages i.e. "Start" , "End"
+        checkValues = ['Start','End']
+        df = df[df['session'].isin(checkValues)]  
+        df = df.sort_values(by='time')
      
-        sessionsDF = pd.DataFrame(columns=['user', 'starttime', 'endtime'])
-
-        for i, row in df.iterrows():
-            user = row['user']
-            time = row['time']
-            session = row['session']
-            if session == 'Start':
-                sessionsDF = sessionsDF._append({'user': user, 'starttime': time, 'endtime': pd.NaT}, ignore_index=True)
-            elif session == 'End':
-                # Find the matching 'Start' time for the current 'End' time
-                if not sessionsDF.empty:
-                    start_index = sessionsDF[(sessionsDF['user'] == user) & (sessionsDF['endtime'].isnull())]
-                    start_index = sessionsDF.index[-1]
-                    sessionsDF.at[start_index, 'endtime'] = time
-                else :
-                    print("found end but not have start")
+        # seprating df based in session flags
+        startDF = df.loc[df['session']=='Start']
+        endDF = df.loc[df['session']=='End']
         
-      
-        max_time = df['time'].max()
-        min_time = df['time'].min()
-        sessionsDF['endtime'] = sessionsDF['endtime'].fillna(max_time)     
-        sessionsDF['starttime'] = sessionsDF['starttime'].fillna(min_time)
+        startDF['starttime'] = startDF['time']
+        endDF['starttime'] = pd.NaT
+        
+        startDF['endtime'] = pd.NaT
+        endDF['endtime'] = endDF['time']
 
-        sessionsDF['duration'] = (sessionsDF['endtime'] - sessionsDF['starttime']).dt.total_seconds()
-       
+      
+        sessionsDF = pd.DataFrame(columns=['user', 'starttime', 'endtime'])
+        # iterating base on unique users in data
+        for user in df['user'].unique():          
+            # checking if number for session starts is less than the end of session if yess then adding values accroidn to it
+            if int(startDF['user'].loc[startDF['user']==user].count()) < int(endDF['user'].loc[endDF['user']==user].count()):
+
+                    for i, row in endDF.loc[endDF['user']==user].iterrows():
+                        try:
+                            sessionsDF = sessionsDF._append({'user': row['user'], 'starttime': startDF[i]['starttime'] , 'endtime': row['endtime']}, ignore_index=True)
+                        except:
+                            sessionsDF = sessionsDF._append({'user': row['user'], 'starttime': df['time'].min() , 'endtime': row['endtime']}, ignore_index=True)                    
+            
+            # checking if number for session starts is greater than the end of session if yess then adding values accroidn to it
+            elif int(startDF['user'].loc[startDF['user']==user].count()) > int(endDF['user'].loc[endDF['user']==user].count()) :
+                    for i, row in startDF.loc[startDF['user']==user].iterrows():
+                        try:
+                            sessionsDF = sessionsDF._append({'user': row['user'], 'starttime': row['starttime'] , 'endtime': endDF[i]['endtime']}, ignore_index=True)
+                        except:
+                            sessionsDF = sessionsDF._append({'user': row['user'], 'starttime': row['starttime']  , 'endtime': df['time'].max()}, ignore_index=True)
+            
+            # if both flages are equal
+            elif int(startDF['user'].loc[startDF['user']==user].count()) == int(endDF['user'].loc[endDF['user']==user].count()) :
+                    for i, row in startDF.loc[startDF['user']==user].iterrows():
+                        try:
+                            sessionsDF = sessionsDF._append({'user': row['user'], 'starttime': row['starttime'] , 'endtime': endDF[i]['endtime']}, ignore_index=True)
+                        except:
+                            pass
+
+        sessionsDF['duration'] = (sessionsDF['endtime'] - sessionsDF['starttime']).dt.total_seconds()       
         result = sessionsDF.groupby('user').agg(sessions=('starttime', 'size'), totalduration=('duration', 'sum')).reset_index()
-        result['totalduration'] = result['totalduration'].astype(int)          
+        result['totalduration'] = result['totalduration'].astype(int)  
+        print(result)
+        result.to_csv('output.csv')
+        
 
-        result.to_csv("output.csv")
-
-      
-   
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
